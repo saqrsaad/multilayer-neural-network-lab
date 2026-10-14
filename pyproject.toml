@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multilayer-neural-network-lab"
+version = "0.1.0"
+description = "An interactive desktop lab for building, training, testing, and visualizing multilayer neural networks from scratch."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+"numpy",
+"PySide6",
+"matplotlib",
+"pandas",
+]
+
+[project.optional-dependencies]
+dev = [
+"pytest",
+"pytest-cov",
+"ruff",
+"mypy",
+]
+
+[project.scripts]
+neural-network-lab = "neural_network_lab.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+warn_return_any = true
+warn_unused_configs = true
+check_untyped_defs = true
