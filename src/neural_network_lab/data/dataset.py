@@ -9,12 +9,68 @@ Labeled datasets (features plus targets) support supervised training
 and evaluation. Unlabeled datasets (features only, targets explicitly
 ``None``) still allow prediction, but supervised loss and accuracy
 cannot be calculated from them.
+
+Every labeled dataset declares its **task**: either
+:data:`BINARY_TARGETS` (targets must be 0 or 1, the project's default)
+or :data:`CONTINUOUS_TARGETS` (any finite numeric value, preserved
+exactly as entered). The task is declared by whoever builds the
+dataset and is never guessed from the values, so a target such as
+``0.61348`` is never silently treated as binary or rounded away. The
+data layer records the declaration without policing values; binary
+validation is applied where binary classification actually requires it.
 """
 
 from __future__ import annotations
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+
+#: Task with targets restricted to 0 or 1 (binary classification).
+BINARY_TARGETS = "binary"
+
+#: Task with unrestricted finite numeric targets (regression).
+CONTINUOUS_TARGETS = "continuous"
+
+#: Task reported for a dataset that carries no targets.
+NO_TASK = "none"
+
+#: Task used when the caller declares none: binary classification, which
+#: is the initial scope of the project.
+DEFAULT_TASK = BINARY_TARGETS
+
+#: Every task a labeled dataset may declare.
+TARGET_KINDS = (BINARY_TARGETS, CONTINUOUS_TARGETS)
+
+#: Human-readable task names, used in user-facing messages.
+TARGET_KIND_LABELS = {
+    BINARY_TARGETS: "binary classification",
+    CONTINUOUS_TARGETS: "continuous regression",
+}
+
+
+def validate_target_kind(target_kind: object) -> str:
+    """Validate a declared task and return it as a plain string.
+
+    Args:
+        target_kind: One of :data:`TARGET_KINDS`.
+
+    Returns:
+        The validated task.
+
+    Raises:
+        TypeError: For a non-string task.
+        ValueError: For an unknown task.
+    """
+    if not isinstance(target_kind, str):
+        raise TypeError(
+            f"target_kind must be a string, got {type(target_kind).__name__}"
+        )
+    if target_kind not in TARGET_KINDS:
+        raise ValueError(
+            f"unknown target_kind {target_kind!r}; "
+            f"use one of {', '.join(TARGET_KINDS)}"
+        )
+    return target_kind
 
 
 def _as_feature_array(features: ArrayLike) -> NDArray[np.float64]:
@@ -85,11 +141,16 @@ class Dataset:
     Features are stored as a ``(number_of_samples, number_of_features)``
     float array. Targets, when present, are stored as a
     ``(number_of_samples, number_of_outputs)`` float array; when absent
-    they are represented explicitly as ``None``.
+    they are represented explicitly as ``None``. Target values are
+    stored exactly as supplied — never rounded, thresholded, or coerced.
     """
 
     def __init__(
-        self, features: ArrayLike, targets: ArrayLike | None = None
+        self,
+        features: ArrayLike,
+        targets: ArrayLike | None = None,
+        *,
+        target_kind: str = DEFAULT_TASK,
     ) -> None:
         """Create a dataset from features and optional targets.
 
@@ -99,20 +160,42 @@ class Dataset:
             targets: Optional 2D numeric array-like whose row count
                 matches ``features``. ``None`` means the dataset is
                 unlabeled (prediction-only).
+            target_kind: Declared task, one of :data:`TARGET_KINDS`.
+                Defaults to binary classification, which requires
+                targets of 0 or 1 wherever binary classification is
+                used; declare :data:`CONTINUOUS_TARGETS` to keep
+                arbitrary finite target values.
 
         Raises:
-            TypeError: For non-numeric features/targets or a non-array
-                ``targets`` that is not ``None``.
+            TypeError: For non-numeric features/targets, a non-array
+                ``targets`` that is not ``None``, or a non-string task.
             ValueError: For wrong dimensions, row-count mismatch,
-                empty data, or NaN/inf values.
+                empty data, NaN/inf values, or an unknown task.
         """
         feature_arr = _as_feature_array(features)
         if targets is None:
             target_arr: NDArray[np.float64] | None = None
         else:
             target_arr = _as_target_array(targets, feature_arr.shape[0])
+        self._target_kind = validate_target_kind(target_kind)
         self._features = feature_arr
         self._targets = target_arr
+
+    @property
+    def target_kind(self) -> str:
+        """Declared task, or :data:`NO_TASK` when unlabeled."""
+        return self._target_kind if self._targets is not None else NO_TASK
+
+    @property
+    def is_binary_task(self) -> bool:
+        """Whether this dataset is used as binary classification.
+
+        True for a dataset that declares binary classification and for
+        an unlabeled one (no task declared yet, so the project's binary
+        default applies); False only when continuous regression was
+        declared.
+        """
+        return self.target_kind != CONTINUOUS_TARGETS
 
     @property
     def features(self) -> NDArray[np.float64]:
@@ -151,8 +234,9 @@ class Dataset:
     def __repr__(self) -> str:
         """Concise summary without dumping array contents."""
         targets = f", targets={self._targets.shape}" if self.has_targets else ""
+        task = f", task={self.target_kind}" if self.has_targets else ""
         return (
-            f"Dataset(features={self._features.shape}{targets})"
+            f"Dataset(features={self._features.shape}{targets}{task})"
         )
 
     def to_arrays(self) -> tuple[NDArray[np.float64], NDArray[np.float64] | None]:

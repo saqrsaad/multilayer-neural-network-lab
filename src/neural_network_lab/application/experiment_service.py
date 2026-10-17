@@ -20,6 +20,7 @@ from datetime import timezone
 
 from neural_network_lab.application.evaluation_service import evaluate
 from neural_network_lab.core.network import NeuralNetwork
+from neural_network_lab.core.training import train_with_validation
 from neural_network_lab.data.dataset import Dataset
 
 #: Valid values for the ``mode`` of an experiment / training run.
@@ -61,6 +62,12 @@ class ExperimentRecord:
     final_train_loss: float
     test_mse: float | None
     test_accuracy: float | None
+    validation_loss: float | None = None
+    validation_samples: int | None = None
+    best_epoch: int | None = None
+    best_validation_loss: float | None = None
+    test_samples: int | None = None
+    model_path: str | None = None
 
     def to_dict(self) -> dict:
         """Return a JSON-compatible dictionary of this record."""
@@ -80,6 +87,12 @@ class ExperimentRecord:
             "final_train_loss": self.final_train_loss,
             "test_mse": self.test_mse,
             "test_accuracy": self.test_accuracy,
+            "validation_loss": self.validation_loss,
+            "validation_samples": self.validation_samples,
+            "best_epoch": self.best_epoch,
+            "best_validation_loss": self.best_validation_loss,
+            "test_samples": self.test_samples,
+            "model_path": self.model_path,
         }
 
     @classmethod
@@ -221,6 +234,40 @@ class ExperimentRecord:
             raise ValueError(
                 "experiment record 'test_accuracy' must lie in [0, 1]"
             )
+        # Optional fields introduced with the split-training workflow:
+        # records saved before it simply omit them and load as None.
+        def optional_metric(key: str) -> float | None:
+            if key not in data or data[key] is None:
+                return None
+            value = data[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"experiment record {key!r} must be finite or None")
+            if not math.isfinite(float(value)):
+                raise ValueError(f"experiment record {key!r} must be finite or None")
+            return float(value)
+
+        def optional_samples(key: str) -> int | None:
+            if key not in data or data[key] is None:
+                return None
+            value = data[key]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 1
+            ):
+                raise ValueError(
+                    f"experiment record {key!r} must be a positive integer or None"
+                )
+            return int(value)
+
+        best_epoch = optional_samples("best_epoch")
+        if best_epoch is not None and epochs > 0 and best_epoch > epochs:
+            raise ValueError(
+                "experiment record 'best_epoch' exceeds its 'epochs' count"
+            )
+        model_path = data.get("model_path")
+        if model_path is not None and not isinstance(model_path, str):
+            raise ValueError("experiment record 'model_path' must be a string or None")
         return cls(
             experiment_id=experiment_id,
             created_at=created_at,
@@ -237,6 +284,12 @@ class ExperimentRecord:
             final_train_loss=float(final_train_loss),
             test_mse=None if test_mse is None else float(test_mse),
             test_accuracy=None if test_accuracy is None else float(test_accuracy),
+            validation_loss=optional_metric("validation_loss"),
+            validation_samples=optional_samples("validation_samples"),
+            best_epoch=best_epoch,
+            best_validation_loss=optional_metric("best_validation_loss"),
+            test_samples=optional_samples("test_samples"),
+            model_path=model_path,
         )
 
 
@@ -380,13 +433,19 @@ def run_experiment(
     train_dataset_name: str | None = None,
     test_dataset: Dataset | None = None,
     test_dataset_name: str | None = None,
+    validation_dataset: Dataset | None = None,
+    validation_dataset_name: str | None = None,
 ) -> ExperimentRecord:
     """Train a network and record the experiment.
 
-    The network is trained in place with the existing core APIs
-    (``continued`` preserves current parameters, ``from_scratch``
-    explicitly reinitializes them first), then the test dataset — if
-    given — is evaluated read-only with the existing evaluation API.
+    The network is trained in place with the existing core APIs: the
+    ``continued`` mode preserves current parameters, ``from_scratch``
+    explicitly reinitializes them first. When a validation dataset is
+    given, its rows are scored read-only after each epoch and the epoch
+    with the lowest validation loss is restored on the network — the
+    final epoch is never assumed to be the best. The test dataset, when
+    given, is evaluated read-only afterwards and never influences
+    training or model selection.
 
     Args:
         network: Network to train in place.
@@ -442,38 +501,76 @@ def run_experiment(
         raise ValueError("seed applies only to mode 'from_scratch'")
     if not train_dataset.has_targets:
         raise ValueError("training requires a labeled dataset with targets")
+    validation_features = None
+    validation_targets = None
+    validation_samples: int | None = None
+    if validation_dataset is not None:
+        if not isinstance(validation_dataset, Dataset):
+            raise TypeError(
+                "validation_dataset must be a Dataset or None, "
+                f"got {type(validation_dataset).__name__}"
+            )
+        if not validation_dataset.has_targets:
+            raise ValueError(
+                "validation requires a labeled dataset with targets"
+            )
+        if validation_dataset_name is None:
+            raise ValueError(
+                "validation_dataset_name requires a validation_dataset to identify"
+            )
+        validation_features, validation_targets = validation_dataset.to_arrays()
+        validation_samples = validation_dataset.n_samples
+    if validation_dataset is None and validation_dataset_name is not None:
+        raise ValueError(
+            "validation_dataset_name requires a validation_dataset to identify"
+        )
+    if validation_dataset_name is not None and not isinstance(
+        validation_dataset_name, str
+    ):
+        raise TypeError("validation_dataset_name must be a string or None")
     features, targets = train_dataset.to_arrays()
     assert targets is not None  # narrowed by has_targets above
-    if mode == "continued":
-        result = network.train(
-            features, targets, epochs=epochs, learning_rate=learning_rate
-        )
-    else:
-        result = network.train_from_scratch(
-            features, targets, epochs=epochs, learning_rate=learning_rate, seed=seed
-        )
+    outcome = train_with_validation(
+        network,
+        features,
+        targets,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        mode=mode,
+        validation_features=validation_features,
+        validation_targets=validation_targets,
+        reinitialize=(mode == "from_scratch"),
+        seed=seed if mode == "from_scratch" else None,
+    )
     test_mse: float | None = None
     test_accuracy: float | None = None
+    test_samples: int | None = None
     if test_dataset is not None:
         evaluation = evaluate(
             network, test_dataset, dataset_name=test_dataset_name
         )
         test_mse = evaluation.mse
         test_accuracy = evaluation.accuracy
+        test_samples = test_dataset.n_samples
     return ExperimentRecord(
         experiment_id=_new_experiment_id(),
         created_at=_utc_now_iso(),
         mode=mode,
         layer_sizes=network.layer_sizes,
-        learning_rate=result.learning_rate,
-        epochs=result.epochs_completed,
+        learning_rate=outcome.learning_rate,
+        epochs=outcome.epochs_completed,
         train_dataset_name=train_dataset_name,
         train_samples=train_dataset.n_samples,
         train_features=train_dataset.n_features,
         train_outputs=int(train_dataset.n_outputs or 0),
         test_dataset_name=test_dataset_name,
-        loss_history=tuple(result.loss_history),
-        final_train_loss=result.final_loss,
+        loss_history=tuple(outcome.loss_history),
+        final_train_loss=outcome.final_loss,
         test_mse=test_mse,
         test_accuracy=test_accuracy,
+        validation_loss=outcome.final_validation_loss,
+        validation_samples=validation_samples,
+        best_epoch=outcome.best_epoch,
+        best_validation_loss=outcome.best_validation_loss,
+        test_samples=test_samples,
     )

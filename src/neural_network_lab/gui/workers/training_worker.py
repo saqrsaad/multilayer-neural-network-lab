@@ -18,7 +18,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtCore import Slot
 
 from neural_network_lab.core.network import NeuralNetwork
-from neural_network_lab.core.network import TrainingResult
+from neural_network_lab.core.training import train_with_validation
 
 
 class TrainingWorker(QObject):
@@ -28,6 +28,11 @@ class TrainingWorker(QObject):
     :class:`QThread` whose ``started`` signal invokes :meth:`run`.
     Results leave the thread only through the signals below, carrying
     plain JSON-like data (no NumPy arrays, no widgets, no networks).
+
+    Validation rows, when supplied, are scored read-only after each
+    epoch; the epoch with the lowest validation loss is snapshotted and
+    restored at the end, so the emitted state is the selected best
+    model. Training rows alone ever contribute gradient updates.
     """
 
     progress = Signal(int, int, float)
@@ -46,6 +51,8 @@ class TrainingWorker(QObject):
         targets,
         initial_state: dict | None = None,
         seed: int | None = None,
+        validation_features=None,
+        validation_targets=None,
         parent=None,
     ) -> None:
         """Capture validated plain inputs; no training happens here."""
@@ -58,11 +65,25 @@ class TrainingWorker(QObject):
         self._targets = np.asarray(targets, dtype=float)
         self._initial_state = initial_state
         self._seed = seed
+        self._validation_features = (
+            None
+            if validation_features is None
+            else np.asarray(validation_features, dtype=float)
+        )
+        self._validation_targets = (
+            None
+            if validation_targets is None
+            else np.asarray(validation_targets, dtype=float)
+        )
         self._cancel_event = threading.Event()
 
     def request_cancel(self) -> None:
         """Ask the running loop to stop after the current epoch."""
         self._cancel_event.set()
+
+    def _emit_progress(self, epoch: int, total: int, loss: float) -> None:
+        """Report one completed epoch; called from the worker thread."""
+        self.progress.emit(epoch, total, loss)
 
     @Slot()
     def run(self) -> None:
@@ -86,32 +107,38 @@ class TrainingWorker(QObject):
                 network = NeuralNetwork(
                     list(self._layer_sizes), seed=self._seed
                 )
-            history: list[float] = []
-            for epoch in range(1, self._epochs + 1):
-                if self._cancel_event.is_set():
-                    self.cancelled.emit()
-                    return
-                loss = network.train_step(
-                    self._features, self._targets, self._learning_rate
-                )
-                loss_value = float(loss)
-                history.append(loss_value)
-                self.progress.emit(epoch, self._epochs, loss_value)
-            result = TrainingResult(
-                epochs_completed=len(history),
-                loss_history=tuple(history),
+            outcome = train_with_validation(
+                network,
+                self._features,
+                self._targets,
+                epochs=self._epochs,
                 learning_rate=self._learning_rate,
                 mode=self._mode,
+                validation_features=self._validation_features,
+                validation_targets=self._validation_targets,
+                should_cancel=self._cancel_event.is_set,
+                on_epoch=self._emit_progress,
             )
         except Exception as exc:  # report, never crash the thread host
             self.failed.emit(f"{type(exc).__name__}: {exc}")
             return
+        if outcome.cancelled:
+            self.cancelled.emit()
+            return
         self.finished.emit(
             {
                 "state": network.to_state_dict(),
-                "history": list(result.loss_history),
-                "mode": result.mode,
-                "epochs": result.epochs_completed,
-                "learning_rate": result.learning_rate,
+                "history": list(outcome.loss_history),
+                "mode": outcome.mode,
+                "epochs": outcome.epochs_completed,
+                "learning_rate": outcome.learning_rate,
+                "validation_history": (
+                    None
+                    if outcome.validation_history is None
+                    else list(outcome.validation_history)
+                ),
+                "best_epoch": outcome.best_epoch,
+                "best_validation_loss": outcome.best_validation_loss,
+                "final_validation_loss": outcome.final_validation_loss,
             }
         )

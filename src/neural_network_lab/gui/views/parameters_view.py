@@ -16,21 +16,23 @@ import math
 from collections.abc import Callable
 
 import numpy as np
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import QComboBox
-from PySide6.QtWidgets import QGroupBox
-from PySide6.QtWidgets import QHBoxLayout
 from PySide6.QtWidgets import QLabel
 from PySide6.QtWidgets import QMessageBox
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QSplitter
 from PySide6.QtWidgets import QTableWidget
 from PySide6.QtWidgets import QTableWidgetItem
-from PySide6.QtWidgets import QVBoxLayout
 from PySide6.QtWidgets import QWidget
 
 from neural_network_lab.core.network import NeuralNetwork
-from neural_network_lab.gui.main_window import CONTENT_MARGIN
-from neural_network_lab.gui.main_window import CONTENT_SPACING
+from neural_network_lab.gui.widgets.page_scaffold import FeedbackArea
+from neural_network_lab.gui.widgets.page_scaffold import MessageLabel
+from neural_network_lab.gui.widgets.page_scaffold import SectionCard
+from neural_network_lab.gui.widgets.page_scaffold import button_row
+from neural_network_lab.gui.widgets.page_scaffold import install_page
+from neural_network_lab.gui.widgets.page_scaffold import make_button
 
 
 def parse_parameter_cell(
@@ -83,76 +85,90 @@ class ParametersView(QWidget):
         self._snapshot_signature: tuple | None = None
         self._visible_layer = 0
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(
-            CONTENT_MARGIN, CONTENT_MARGIN, CONTENT_MARGIN, CONTENT_MARGIN
-        )
-        layout.setSpacing(CONTENT_SPACING)
-
-        self._info_label = QLabel("No model available.", self)
-        self._info_label.setWordWrap(True)
-        self._info_label.setObjectName("parametersInfo")
-        layout.addWidget(self._info_label)
-
-        self._warning_label = QLabel(
-            "Manual edits change this model's predictions: evaluation and "
-            "continued training will use the edited parameters.",
+        self._page = install_page(
             self,
+            "Weights and Biases",
+            "Inspect and edit the shared live model's parameters. Edits "
+            "are validated layer by layer before anything is applied, so "
+            "a rejected edit leaves the model untouched.",
         )
-        self._warning_label.setWordWrap(True)
-        self._warning_label.setStyleSheet("color: #8a5a00;")
-        self._warning_label.setObjectName("parametersWarning")
-        layout.addWidget(self._warning_label)
 
-        top_row = QHBoxLayout()
-        top_row.setSpacing(CONTENT_SPACING)
-        top_row.addWidget(QLabel("Layer:", self))
-        self._layer_combo = QComboBox(self)
+        model_card = SectionCard(
+            "Model",
+            parent=self._page,
+        )
+        self._info_label = MessageLabel("info", model_card)
+        self._info_label.setText("No model available.")
+        model_card.add(self._info_label)
+        self._warning_label = MessageLabel("warning", model_card)
+        self._warning_label.setText(
+            "Manual edits change this model's predictions: evaluation and "
+            "continued training will use the edited parameters."
+        )
+        model_card.add(self._warning_label)
+        self._layer_combo = QComboBox(model_card)
         self._layer_combo.setObjectName("layerCombo")
-        top_row.addWidget(self._layer_combo, 1)
-        self._refresh_button = QPushButton("Refresh from model", self)
+        self._layer_combo.setToolTip(
+            "Choose which layer's weights and biases to show."
+        )
+        self._refresh_button = make_button(
+            "Refresh from model",
+            kind="secondary",
+            tooltip="Reload the tables from the current model, discarding "
+            "pending edits after confirmation.",
+            parent=model_card,
+        )
         self._refresh_button.setObjectName("refreshButton")
-        top_row.addWidget(self._refresh_button)
-        layout.addLayout(top_row)
+        layer_row = button_row(trailing_stretch=False)
+        layer_row.addWidget(QLabel("Layer:", model_card))
+        layer_row.addWidget(self._layer_combo, 1)
+        layer_row.addWidget(self._refresh_button)
+        model_card.add_layout(layer_row)
+        self._page.add(model_card)
 
-        self._weights_group = QGroupBox("Weights", self)
-        weights_layout = QVBoxLayout(self._weights_group)
-        self._weights_shape = QLabel("", self._weights_group)
-        self._weights_shape.setObjectName("weightsShape")
-        weights_layout.addWidget(self._weights_shape)
+        tables = QSplitter(Qt.Orientation.Vertical, self._page)
+        tables.setObjectName("parameterTablesSplitter")
+        tables.setChildrenCollapsible(False)
+
+        self._weights_group = SectionCard(
+            "Weights", parent=tables
+        )
+        self._weights_shape = MessageLabel("hint", self._weights_group)
         self._weights_table = QTableWidget(self._weights_group)
         self._weights_table.setObjectName("weightsTable")
         self._weights_table.setAlternatingRowColors(True)
-        weights_layout.addWidget(self._weights_table)
-        layout.addWidget(self._weights_group, 1)
+        self._weights_table.setMinimumHeight(160)
+        self._weights_group.add(self._weights_shape)
+        self._weights_group.add(self._weights_table, 1)
+        tables.addWidget(self._weights_group)
 
-        self._biases_group = QGroupBox("Biases", self)
-        biases_layout = QVBoxLayout(self._biases_group)
-        self._biases_shape = QLabel("", self._biases_group)
-        self._biases_shape.setObjectName("biasesShape")
-        biases_layout.addWidget(self._biases_shape)
+        self._biases_group = SectionCard("Biases", parent=tables)
+        self._biases_shape = MessageLabel("hint", self._biases_group)
         self._biases_table = QTableWidget(self._biases_group)
         self._biases_table.setObjectName("biasesTable")
         self._biases_table.setAlternatingRowColors(True)
-        biases_layout.addWidget(self._biases_table)
-        layout.addWidget(self._biases_group)
+        self._biases_table.setMinimumHeight(120)
+        self._biases_group.add(self._biases_shape)
+        self._biases_group.add(self._biases_table, 1)
+        tables.addWidget(self._biases_group)
+        tables.setStretchFactor(0, 3)
+        tables.setStretchFactor(1, 1)
+        self._page.add(tables, 1)
 
-        actions = QHBoxLayout()
-        actions.setSpacing(CONTENT_SPACING)
-        self._apply_button = QPushButton("Apply edits", self)
+        self._apply_button = make_button(
+            "Apply edits",
+            kind="primary",
+            tooltip="Validate every edited cell and apply all layers "
+            "together.",
+            parent=self._page,
+        )
         self._apply_button.setObjectName("applyButton")
-        actions.addWidget(self._apply_button)
-        self._status_label = QLabel("", self)
-        self._status_label.setWordWrap(True)
-        self._status_label.setObjectName("parametersStatus")
-        actions.addWidget(self._status_label, 1)
-        layout.addLayout(actions)
+        self._page.add_layout(button_row(self._apply_button))
 
-        self._error_label = QLabel("", self)
-        self._error_label.setWordWrap(True)
-        self._error_label.setStyleSheet("color: #b00020;")
-        self._error_label.setObjectName("parametersError")
-        layout.addWidget(self._error_label)
+        self._feedback = FeedbackArea(parent=self._page)
+        self._status_label = self._feedback.status_label()
+        self._error_label = self._feedback.error_label()
+        self._page.add(self._feedback)
 
         self._layer_combo.currentIndexChanged.connect(self._on_layer_changed)
         self._apply_button.clicked.connect(self._on_apply)

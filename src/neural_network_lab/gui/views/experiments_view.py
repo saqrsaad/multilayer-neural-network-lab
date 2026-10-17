@@ -16,12 +16,10 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView
 from PySide6.QtWidgets import QFileDialog
-from PySide6.QtWidgets import QGroupBox
-from PySide6.QtWidgets import QHBoxLayout
-from PySide6.QtWidgets import QLabel
 from PySide6.QtWidgets import QLineEdit
 from PySide6.QtWidgets import QPlainTextEdit
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QSplitter
+from PySide6.QtWidgets import QTabWidget
 from PySide6.QtWidgets import QTableWidget
 from PySide6.QtWidgets import QTableWidgetItem
 from PySide6.QtWidgets import QVBoxLayout
@@ -32,12 +30,22 @@ from neural_network_lab.application.experiment_service import (
     ExperimentComparison,
 )
 from neural_network_lab.application.experiment_service import compare_experiments
-from neural_network_lab.gui.main_window import CONTENT_MARGIN
-from neural_network_lab.gui.main_window import CONTENT_SPACING
+from neural_network_lab.gui.widgets.page_scaffold import FeedbackArea
+from neural_network_lab.gui.widgets.page_scaffold import SectionCard
+from neural_network_lab.gui.widgets.page_scaffold import button_row
+from neural_network_lab.gui.widgets.page_scaffold import install_page
+from neural_network_lab.gui.widgets.page_scaffold import make_button
+from neural_network_lab.gui.widgets.ui_theme import CONTENT_SPACING
 from neural_network_lab.storage.experiment_storage import load_experiment_record
 
 #: Placeholder shown wherever a metric was not recorded (distinct from 0).
 MISSING_METRIC_TEXT = "— (not recorded)"
+
+#: Project root of this checkout (…/src/neural_network_lab/gui/views/).
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+
+#: Directory the directory-selection dialog opens at first.
+DEFAULT_EXPERIMENTS_DIR = _PROJECT_ROOT / "data" / "experiments"
 
 #: Columns of the saved-experiments table.
 LIST_COLUMNS = (
@@ -48,6 +56,7 @@ LIST_COLUMNS = (
     "LR",
     "Epochs",
     "Train loss",
+    "Val loss",
     "Test MSE",
     "Test acc",
     "Train data",
@@ -72,11 +81,22 @@ def format_layers(sizes: tuple[int, ...]) -> str:
     return "[" + ", ".join(str(size) for size in sizes) + "]"
 
 
+def format_epoch(value: int | None) -> str:
+    """Format an optional epoch number."""
+    return str(value) if value is not None else "—"
+
+
 def format_record_detail(record: ExperimentRecord) -> str:
     """Render every field of a record as human-readable lines."""
     history = "\n".join(
         f"  epoch {index + 1}/{record.epochs}: {loss!r}"
         for index, loss in enumerate(record.loss_history)
+    )
+    best_line = (
+        f"Best epoch: {record.best_epoch} (restored, validation MSE "
+        f"{record.best_validation_loss!r})"
+        if record.best_epoch is not None and record.best_validation_loss is not None
+        else "Best epoch: — (no validation subset, so the final epoch is the model)"
     )
     return (
         f"Experiment: {record.experiment_id}\n"
@@ -89,10 +109,26 @@ def format_record_detail(record: ExperimentRecord) -> str:
         f"({record.train_samples} samples, "
         f"{record.train_features} features, "
         f"{record.train_outputs} outputs)\n"
-        f"Test data: {format_name(record.test_dataset_name)}\n"
+        f"Validation rows: "
+        + (
+            "— (no validation subset)"
+            if record.validation_samples is None
+            else f"{record.validation_samples}"
+        )
+        + "\n"
+        f"Test data: {format_name(record.test_dataset_name)}"
+        + (
+            ""
+            if record.test_samples is None
+            else f" ({record.test_samples} samples)"
+        )
+        + "\n"
         f"Final train loss (MSE): {record.final_train_loss!r}\n"
+        f"Validation MSE: {format_metric(record.validation_loss)}\n"
+        f"{best_line}\n"
         f"Test MSE: {format_metric(record.test_mse)}\n"
         f"Test accuracy: {format_metric(record.test_accuracy)}\n"
+        f"Model state: {record.model_path or '— (not saved)'}\n"
         f"Loss history (recorded training MSE per epoch):\n{history}"
     )
 
@@ -152,6 +188,16 @@ def comparison_rows(
             repr(second.final_train_loss),
         ),
         (
+            "Validation MSE",
+            format_metric(first.validation_loss),
+            format_metric(second.validation_loss),
+        ),
+        (
+            "Best epoch",
+            format_epoch(first.best_epoch),
+            format_epoch(second.best_epoch),
+        ),
+        (
             "Test MSE",
             format_metric(first.test_mse),
             format_metric(second.test_mse),
@@ -188,38 +234,66 @@ class ExperimentsView(QWidget):
         self._records: list[ExperimentRecord] = []
         self._failures: list[tuple[str, str]] = []
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(
-            CONTENT_MARGIN, CONTENT_MARGIN, CONTENT_MARGIN, CONTENT_MARGIN
+        self._page = install_page(
+            self,
+            "Experiment History",
+            "Open a folder of saved experiment records to review them and "
+            "compare two runs. This page never writes, recalculates, or "
+            "deletes a record.",
         )
-        layout.setSpacing(CONTENT_SPACING)
 
-        directory_row = QHBoxLayout()
-        directory_row.setSpacing(CONTENT_SPACING)
-        directory_row.addWidget(QLabel("Directory:", self))
-        self._directory_edit = QLineEdit(self)
+        directory_card = SectionCard(
+            "Records folder",
+            description=(
+                "Choose the folder holding saved experiment JSON files. "
+                "Files that cannot be read are reported and skipped; the "
+                "valid ones are still listed."
+            ),
+            parent=self._page,
+        )
+        self._directory_edit = QLineEdit(directory_card)
         self._directory_edit.setReadOnly(True)
         self._directory_edit.setPlaceholderText(
             "No directory selected — browse to a folder of saved records."
         )
         self._directory_edit.setObjectName("experimentsDirectory")
-        directory_row.addWidget(self._directory_edit, 1)
-        self._browse_button = QPushButton("Browse…", self)
+        directory_card.add(self._directory_edit)
+        self._browse_button = make_button(
+            "Browse…",
+            kind="primary",
+            tooltip="Choose a folder of saved experiment records.",
+            parent=directory_card,
+        )
         self._browse_button.setObjectName("browseButton")
-        directory_row.addWidget(self._browse_button)
-        self._refresh_button = QPushButton("Refresh", self)
+        self._refresh_button = make_button(
+            "Refresh",
+            kind="secondary",
+            tooltip="Reload the records of the current folder.",
+            parent=directory_card,
+        )
         self._refresh_button.setObjectName("refreshButton")
-        directory_row.addWidget(self._refresh_button)
-        layout.addLayout(directory_row)
+        directory_card.add_layout(
+            button_row(self._browse_button, self._refresh_button)
+        )
+        self._page.add(directory_card)
 
-        self._status_label = QLabel("No records loaded.", self)
-        self._status_label.setWordWrap(True)
-        self._status_label.setObjectName("experimentsStatus")
-        layout.addWidget(self._status_label)
+        self._feedback = FeedbackArea(
+            self._page, status_text="No records loaded."
+        )
+        self._status_label = self._feedback.status_label()
+        self._error_label = self._feedback.error_label()
+        self._page.add(self._feedback)
 
-        list_group = QGroupBox("Saved experiments", self)
-        list_layout = QVBoxLayout(list_group)
-        list_layout.setSpacing(CONTENT_SPACING)
+        panes = QSplitter(Qt.Orientation.Vertical, self._page)
+        panes.setObjectName("experimentsSplitter")
+        panes.setChildrenCollapsible(False)
+
+        list_group = SectionCard(
+            "Saved experiments",
+            description="Newest first. Select one row for its detail, or "
+            "two rows to compare them.",
+            parent=panes,
+        )
         self._records_table = QTableWidget(list_group)
         self._records_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._records_table.setSelectionBehavior(
@@ -228,41 +302,54 @@ class ExperimentsView(QWidget):
         self._records_table.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
+        self._records_table.setAlternatingRowColors(True)
         self._records_table.setObjectName("experimentsTable")
-        list_layout.addWidget(self._records_table)
-        layout.addWidget(list_group, 1)
+        self._records_table.setMinimumHeight(200)
+        list_group.add(self._records_table, 1)
+        panes.addWidget(list_group)
 
-        detail_group = QGroupBox("Record detail", self)
-        detail_layout = QVBoxLayout(detail_group)
-        detail_layout.setSpacing(CONTENT_SPACING)
-        self._detail_view = QPlainTextEdit(detail_group)
+        detail_panes = SectionCard(
+            "Detail and comparison",
+            description=(
+                "The first selected record is shown in full; select "
+                "exactly two records to compare them."
+            ),
+            parent=panes,
+        )
+        self._detail_tabs = QTabWidget(detail_panes)
+        self._detail_tabs.setObjectName("experimentDetailTabs")
+        self._detail_view = QPlainTextEdit(self._detail_tabs)
         self._detail_view.setReadOnly(True)
         self._detail_view.setObjectName("experimentDetail")
         self._detail_view.setPlaceholderText(
             "Select a record above to inspect its full configuration."
         )
-        detail_layout.addWidget(self._detail_view)
-        layout.addWidget(detail_group, 1)
-
-        compare_group = QGroupBox("Side-by-side comparison", self)
-        compare_layout = QVBoxLayout(compare_group)
+        self._detail_tabs.addTab(self._detail_view, "Record detail")
+        compare_pane = QWidget(self._detail_tabs)
+        compare_layout = QVBoxLayout(compare_pane)
+        compare_layout.setContentsMargins(0, 0, 0, 0)
         compare_layout.setSpacing(CONTENT_SPACING)
-        self._compare_button = QPushButton("Compare selected (needs exactly 2)", self)
+        self._compare_button = make_button(
+            "Compare selected (needs exactly 2)",
+            kind="primary",
+            tooltip="Compare the two selected records side by side.",
+            parent=compare_pane,
+        )
         self._compare_button.setObjectName("compareButton")
-        compare_layout.addWidget(self._compare_button)
-        self._comparison_table = QTableWidget(compare_group)
+        compare_layout.addLayout(button_row(self._compare_button))
+        self._comparison_table = QTableWidget(compare_pane)
         self._comparison_table.setEditTriggers(
             QTableWidget.EditTrigger.NoEditTriggers
         )
+        self._comparison_table.setAlternatingRowColors(True)
         self._comparison_table.setObjectName("comparisonTable")
         compare_layout.addWidget(self._comparison_table, 1)
-        layout.addWidget(compare_group, 1)
-
-        self._error_label = QLabel("", self)
-        self._error_label.setWordWrap(True)
-        self._error_label.setStyleSheet("color: #b00020;")
-        self._error_label.setObjectName("experimentsError")
-        layout.addWidget(self._error_label)
+        self._detail_tabs.addTab(compare_pane, "Comparison")
+        detail_panes.add(self._detail_tabs, 1)
+        panes.addWidget(detail_panes)
+        panes.setStretchFactor(0, 3)
+        panes.setStretchFactor(1, 2)
+        self._page.add(panes, 1)
 
         self._browse_button.clicked.connect(self._on_browse)
         self._refresh_button.clicked.connect(self._on_refresh)
@@ -285,6 +372,10 @@ class ExperimentsView(QWidget):
         """Return ``(filename, message)`` pairs skipped by the last load."""
         return list(self._failures)
 
+    def current_directory(self) -> str:
+        """Return the directory currently shown, or an empty string."""
+        return self._directory_edit.text().strip()
+
     def load_directory(self, path: str | Path) -> bool:
         """Load every ``*.json`` record file from a directory.
 
@@ -298,6 +389,7 @@ class ExperimentsView(QWidget):
         if not directory.is_dir():
             self.show_error(f"Not a directory: {directory}")
             return False
+        keep_ids = self._selected_ids_in_order()
         records: list[ExperimentRecord] = []
         failures: list[tuple[str, str]] = []
         for file_path in sorted(directory.glob("*.json")):
@@ -306,11 +398,14 @@ class ExperimentsView(QWidget):
                 records.append(ExperimentRecord.from_dict(payload))
             except (TypeError, ValueError, OSError) as exc:
                 failures.append((file_path.name, str(exc)))
+        # Newest first, using each record's own recorded timestamp.
+        records.sort(key=lambda record: record.created_at, reverse=True)
         self._records = records
         self._failures = failures
         self._directory_edit.setText(str(directory))
         self.clear_error()
         self._refresh_table()
+        self._restore_selection(keep_ids)
         self._detail_view.clear()
         self._comparison_table.clear()
         self._comparison_table.setRowCount(0)
@@ -324,13 +419,16 @@ class ExperimentsView(QWidget):
                 + "; ".join(f"{name}: {message}" for name, message in failures)
             )
         self._status_label.setText(
-            f"Directory {directory}: " + "; ".join(parts) + "."
+            f"Directory {directory}: " + "; ".join(parts) + " "
+            "(newest first)."
         )
         return True
 
     def _on_browse(self) -> None:
         """Ask for a directory, then load it (nothing stored on cancel)."""
-        chosen = QFileDialog.getExistingDirectory(self, "Open experiments directory")
+        chosen = QFileDialog.getExistingDirectory(
+            self, "Open experiments directory", str(DEFAULT_EXPERIMENTS_DIR)
+        )
         if not chosen:
             return
         self.load_directory(chosen)
@@ -355,6 +453,7 @@ class ExperimentsView(QWidget):
             repr(record.learning_rate),
             str(record.epochs),
             repr(record.final_train_loss),
+            format_metric(record.validation_loss),
             format_metric(record.test_mse),
             format_metric(record.test_accuracy),
             format_name(record.train_dataset_name),
@@ -388,6 +487,33 @@ class ExperimentsView(QWidget):
                 stored = item.data(Qt.ItemDataRole.UserRole)
                 ids.append(stored if stored is not None else "")
         return ids
+
+    def _restore_selection(self, ids: list[str]) -> None:
+        """Re-select records that are still listed after a reload.
+
+        Selection is re-applied by row so the refresh never silently
+        changes which records the detail and comparison panes show.
+        """
+        wanted = [value for value in ids if value]
+        if not wanted:
+            return
+        by_id = {
+            record.experiment_id: index
+            for index, record in enumerate(self._records)
+        }
+        self._records_table.blockSignals(True)
+        try:
+            for experiment_id in wanted:
+                row = by_id.get(experiment_id)
+                if row is None:
+                    continue
+                for column in range(len(LIST_COLUMNS)):
+                    item = self._records_table.item(row, column)
+                    if item is not None:
+                        item.setSelected(True)
+        finally:
+            self._records_table.blockSignals(False)
+        self._on_selection_changed()
 
     def _on_selection_changed(self) -> None:
         """Show the full detail of the first selected record."""
@@ -435,3 +561,4 @@ class ExperimentsView(QWidget):
             table.setItem(row_index, 1, QTableWidgetItem(left))
             table.setItem(row_index, 2, QTableWidgetItem(right))
         table.resizeColumnsToContents()
+        self._detail_tabs.setCurrentIndex(1)

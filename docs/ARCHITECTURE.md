@@ -99,6 +99,17 @@ Responsibilities:
 
 Visualization components must use recorded results rather than inventing or estimating missing metrics.
 
+2.7 Shared Presentation Components
+
+Location: "src/neural_network_lab/gui/widgets/ui_theme.py" and "src/neural_network_lab/gui/widgets/page_scaffold.py"
+
+Responsibilities:
+
+- Own the design tokens (spacing, margins, colours, window sizes) and the application-wide Qt style sheet.
+- Provide the reusable page, section card, feedback, and button components that every view is built from, so presentation is defined once instead of separately per page.
+
+These modules contain no application state and no mathematics. Views compose them; they never import views.
+
 3. Dependency Direction
 
 The intended dependency direction is:
@@ -110,6 +121,8 @@ Application -> Data
 Application -> Storage
 
 GUI -> Visualization Widgets
+
+GUI -> Shared Presentation Components
 
 Visualization widgets may receive structured result data from the GUI or application layer.
 

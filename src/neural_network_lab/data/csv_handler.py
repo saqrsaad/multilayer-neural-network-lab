@@ -27,6 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
+from neural_network_lab.data.dataset import DEFAULT_TASK
 from neural_network_lab.data.dataset import Dataset
 
 
@@ -101,6 +102,7 @@ def import_dataset_from_csv(
     *,
     target_columns: int | Sequence[int] | None,
     has_header: bool = True,
+    target_kind: str = DEFAULT_TASK,
 ) -> Dataset:
     """Import a numerical CSV file as a :class:`Dataset`.
 
@@ -115,6 +117,9 @@ def import_dataset_from_csv(
             their file order.
         has_header: Whether the first row is a header to skip. The
             header must then have the same column count as the data.
+        target_kind: Declared task recorded on the imported dataset, so
+            continuous targets keep their exact values and are not
+            validated as binary. Ignored for unlabeled files.
 
     Returns:
         Validated :class:`Dataset` (existing validation rules apply:
@@ -123,8 +128,8 @@ def import_dataset_from_csv(
     Raises:
         TypeError: For non-path ``path`` or non-integer column config.
         ValueError: For empty files, ragged rows, blank rows,
-            non-numeric or non-finite cells, bad column selections, or
-            datasets failing validation.
+            non-numeric or non-finite cells, bad column selections, an
+            unknown task, or datasets failing validation.
         FileNotFoundError: If ``path`` does not exist.
     """
     file_path = _coerce_path(path, "path")
@@ -188,7 +193,7 @@ def import_dataset_from_csv(
     if not target_index_list:
         return Dataset(features)
     targets = matrix[:, target_index_list]
-    return Dataset(features, targets)
+    return Dataset(features, targets, target_kind=target_kind)
 
 
 def export_dataset_to_csv(

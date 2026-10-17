@@ -1,10 +1,11 @@
 """Main desktop window and navigation for Neural Network Lab.
 
-The window provides a navigation list (one entry per section from
-``docs/PROJECT_SPEC.md`` §12) beside a stacked content area. Only views
-whose tasks are implemented are registered with real widgets; every
-other section shows a clearly labeled placeholder instead of crashing.
-Later tasks integrate new views through :meth:`MainWindow.register_view`
+The window shows a titled navigation panel (one entry per section from
+``docs/PROJECT_SPEC.md`` §12) beside a resizable stacked content area;
+the entry of the visible page stays highlighted. Only views whose
+tasks are implemented are registered with real widgets; every other
+section shows a clearly labeled placeholder instead of crashing. Later
+tasks integrate new views through :meth:`MainWindow.register_view`
 without touching navigation logic.
 
 No neural-network mathematics lives here: this module only arranges
@@ -21,25 +22,33 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import QAbstractItemView
 from PySide6.QtWidgets import QApplication
-from PySide6.QtWidgets import QHBoxLayout
 from PySide6.QtWidgets import QLabel
 from PySide6.QtWidgets import QListWidget
 from PySide6.QtWidgets import QListWidgetItem
 from PySide6.QtWidgets import QMainWindow
 from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QSplitter
 from PySide6.QtWidgets import QStackedWidget
 from PySide6.QtWidgets import QVBoxLayout
 from PySide6.QtWidgets import QWidget
 
-#: Consistent content margins (pixels) for GUI pages.
-CONTENT_MARGIN = 12
+from neural_network_lab.gui.widgets.page_scaffold import make_selectable
+from neural_network_lab.gui.widgets.page_scaffold import PageHeader
+from neural_network_lab.gui.widgets.ui_theme import CONTENT_MARGIN
+from neural_network_lab.gui.widgets.ui_theme import CONTENT_SPACING
+from neural_network_lab.gui.widgets.ui_theme import DEFAULT_WINDOW_HEIGHT
+from neural_network_lab.gui.widgets.ui_theme import DEFAULT_WINDOW_WIDTH
+from neural_network_lab.gui.widgets.ui_theme import FIELD_SPACING
+from neural_network_lab.gui.widgets.ui_theme import MIN_WINDOW_HEIGHT
+from neural_network_lab.gui.widgets.ui_theme import MIN_WINDOW_WIDTH
+from neural_network_lab.gui.widgets.ui_theme import NAVIGATION_MAX_WIDTH
+from neural_network_lab.gui.widgets.ui_theme import NAVIGATION_MIN_WIDTH
+from neural_network_lab.gui.widgets.ui_theme import apply_theme
 
-#: Consistent spacing (pixels) between stacked GUI elements.
-CONTENT_SPACING = 8
-
-#: Fixed width (pixels) of the navigation list.
-NAVIGATION_WIDTH = 180
+#: Preferred width (pixels) of the navigation panel.
+NAVIGATION_WIDTH = NAVIGATION_MIN_WIDTH
 
 #: Fallback text for sections whose real view is not implemented yet.
 PLACEHOLDER_NOTE = "This view is not implemented yet."
@@ -76,23 +85,27 @@ class PlaceholderView(QWidget):
             CONTENT_MARGIN, CONTENT_MARGIN, CONTENT_MARGIN, CONTENT_MARGIN
         )
         layout.setSpacing(CONTENT_SPACING)
-        heading = QLabel(title)
-        heading.setObjectName("placeholderTitle")
-        layout.addWidget(heading)
-        message = QLabel(note)
-        message.setWordWrap(True)
-        message.setObjectName("placeholderNote")
+        header = PageHeader(title)
+        layout.addWidget(header)
+        message = make_selectable(QLabel(note))
         layout.addWidget(message)
         layout.addStretch(1)
 
 
 def create_application(argv: list[str] | None = None) -> QApplication:
-    """Return the shared QApplication, creating it when necessary."""
+    """Return the shared QApplication, creating it when necessary.
+
+    The shared visual language is installed here so that every window
+    and page created afterwards renders identically, including windows
+    built directly in tests.
+    """
     existing = QApplication.instance()
     if existing is not None:
         assert isinstance(existing, QApplication)
-        return existing
-    return QApplication(sys.argv if argv is None else argv)
+        return apply_theme(existing)
+    return apply_theme(
+        QApplication(sys.argv if argv is None else argv)
+    )
 
 
 def create_main_window() -> MainWindow:
@@ -101,37 +114,74 @@ def create_main_window() -> MainWindow:
 
 
 class MainWindow(QMainWindow):
-    """Main window with navigation list and stacked content pages."""
+    """Main window with navigation panel and stacked content pages."""
 
     def __init__(self) -> None:
         """Create the window, navigation, and placeholder pages."""
         super().__init__()
         self.setWindowTitle("Neural Network Lab")
+        self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        self.resize(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
         self._factories: dict[str, Callable[[], QWidget]] = {}
         self._pages: dict[str, QWidget] = {}
         self._order: list[str] = []
 
         central = QWidget(self)
+        central.setObjectName("centralArea")
         self.setCentralWidget(central)
-        outer = QHBoxLayout(central)
+        outer = QVBoxLayout(central)
         outer.setContentsMargins(
             CONTENT_MARGIN, CONTENT_MARGIN, CONTENT_MARGIN, CONTENT_MARGIN
         )
         outer.setSpacing(CONTENT_SPACING)
 
-        self._navigation = QListWidget(central)
-        self._navigation.setFixedWidth(NAVIGATION_WIDTH)
-        self._navigation.setObjectName("navigationList")
-        outer.addWidget(self._navigation)
+        splitter = QSplitter(Qt.Orientation.Horizontal, central)
+        splitter.setObjectName("mainSplitter")
+        splitter.setChildrenCollapsible(False)
+        outer.addWidget(splitter, 1)
 
-        self._stack = QStackedWidget(central)
+        navigation_panel = QWidget(splitter)
+        navigation_panel.setObjectName("navigationPanel")
+        navigation_panel.setMinimumWidth(NAVIGATION_MIN_WIDTH)
+        navigation_panel.setMaximumWidth(NAVIGATION_MAX_WIDTH)
+        panel_layout = QVBoxLayout(navigation_panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(FIELD_SPACING)
+        self._app_title = QLabel("Neural Network Lab", navigation_panel)
+        self._app_title.setObjectName("appTitle")
+        panel_layout.addWidget(self._app_title)
+        self._app_subtitle = QLabel("Experiment workflow", navigation_panel)
+        self._app_subtitle.setObjectName("appSubtitle")
+        panel_layout.addWidget(self._app_subtitle)
+
+        self._navigation = QListWidget(navigation_panel)
+        self._navigation.setObjectName("navigationList")
+        self._navigation.setUniformItemSizes(True)
+        self._navigation.setSpacing(2)
+        self._navigation.setVerticalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
+        self._navigation.setToolTip(
+            "Jump to a section. The current section stays highlighted."
+        )
+        panel_layout.addWidget(self._navigation, 1)
+        splitter.addWidget(navigation_panel)
+
+        self._stack = QStackedWidget(splitter)
         self._stack.setObjectName("contentStack")
-        outer.addWidget(self._stack, 1)
+        splitter.addWidget(self._stack)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([NAVIGATION_WIDTH, DEFAULT_WINDOW_WIDTH])
+
+        self._page_status = QLabel("", self)
+        self.statusBar().addPermanentWidget(self._page_status)
 
         for spec in VIEW_SPECS:
             self._order.append(spec.key)
             item = QListWidgetItem(spec.title, self._navigation)
             item.setData(Qt.ItemDataRole.UserRole, spec.key)
+            item.setToolTip(spec.title)
             self._factories[spec.key] = self._placeholder_factory(spec.title)
 
         self._navigation.currentRowChanged.connect(self._on_navigation_row)
@@ -153,6 +203,20 @@ class MainWindow(QMainWindow):
 
         return DatasetView()
 
+    def _dashboard_factory(self) -> QWidget:
+        """Build the dashboard fed by the existing pages' state."""
+        from neural_network_lab.gui.views.dashboard_view import DashboardView
+
+        view = DashboardView()
+        view.set_dataset_provider(self._datasets_current_dataset)
+        view.set_network_provider(self._training_current_network)
+        view.set_layer_sizes_provider(self._training_current_layer_sizes)
+        view.set_training_active_provider(self._training_is_active)
+        view.set_last_run_provider(self._training_last_run_details)
+        view.set_experiment_state_provider(self._experiments_loaded_state)
+        view.set_navigator(self.request_view)
+        return view
+
     def _training_factory(self) -> QWidget:
         """Build the training view fed by the dataset editor selection."""
         from neural_network_lab.gui.views.training_view import TrainingView
@@ -168,6 +232,7 @@ class MainWindow(QMainWindow):
         view = TestingView()
         view.set_network_provider(self._training_current_network)
         view.set_dataset_provider(self._datasets_current_dataset)
+        view.set_model_revision_provider(self._training_model_revision)
         return view
 
     def _parameters_factory(self) -> QWidget:
@@ -184,6 +249,29 @@ class MainWindow(QMainWindow):
         from neural_network_lab.gui.views.experiments_view import ExperimentsView
 
         return ExperimentsView()
+
+    def _visualization_factory(self) -> QWidget:
+        """Build the visualization view fed by the model and dataset."""
+        from neural_network_lab.gui.views.visualization_view import (
+            VisualizationView,
+        )
+
+        view = VisualizationView()
+        view.set_network_provider(self._training_current_network)
+        view.set_dataset_provider(self._datasets_current_dataset)
+        return view
+
+    def _network_factory(self) -> QWidget:
+        """Build the network configuration view fed by the active model."""
+        from neural_network_lab.gui.views.network_configuration_view import (
+            NetworkConfigurationView,
+        )
+
+        view = NetworkConfigurationView()
+        view.set_current_sizes_provider(self._training_current_layer_sizes)
+        view.set_dataset_provider(self._datasets_current_dataset)
+        view.set_network_applier(self._training_apply_layer_sizes)
+        return view
 
     def _datasets_current_dataset(self):
         """Return the dataset editor's applied dataset, if any."""
@@ -207,6 +295,143 @@ class MainWindow(QMainWindow):
         except Exception:
             return None
 
+    def _training_current_layer_sizes(self):
+        """Return the active network's layer sizes, if it exists."""
+        page = self._pages.get("training")
+        getter = getattr(page, "current_layer_sizes", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter()
+        except Exception:
+            return None
+
+    def _training_is_active(self) -> bool:
+        """Return whether the training view is running a training job."""
+        page = self._pages.get("training")
+        getter = getattr(page, "is_training_active", None)
+        if not callable(getter):
+            return False
+        try:
+            return bool(getter())
+        except Exception:
+            return False
+
+    def _training_model_revision(self) -> int:
+        """Return the active model's revision counter, 0 when unavailable."""
+        page = self._pages.get("training")
+        getter = getattr(page, "model_revision", None)
+        if not callable(getter):
+            return 0
+        try:
+            return int(getter())
+        except Exception:
+            return 0
+
+    def _training_last_run_text(self) -> str | None:
+        """Return the training view's one-line run summary, if any."""
+        page = self._pages.get("training")
+        getter = getattr(page, "last_run_summary", None)
+        if not callable(getter):
+            return None
+        try:
+            summary = getter()
+        except Exception:
+            return None
+        return summary if isinstance(summary, str) and summary else None
+
+    def _training_last_run_details(self) -> dict | None:
+        """Return the training view's last finished-run fields, if any.
+
+        The dashboard renders these as its results table, so a value the
+        run did not record stays explicitly missing instead of being
+        hidden inside one long sentence.
+        """
+        page = self._pages.get("training")
+        getter = getattr(page, "last_run_details", None)
+        if not callable(getter):
+            return None
+        try:
+            details = getter()
+        except Exception:
+            return None
+        return details if isinstance(details, dict) else None
+
+    def _experiments_loaded_state(self) -> tuple[int, int, str | None]:
+        """Return the experiment view's loaded-record summary.
+
+        A zero-length directory string means the page was never opened,
+        so the dashboard reports that instead of counting nothing.
+        """
+        page = self._pages.get("experiments")
+        if page is None:
+            return (0, 0, None)
+        records_getter = getattr(page, "loaded_records", None)
+        failures_getter = getattr(page, "load_failures", None)
+        directory_getter = getattr(page, "current_directory", None)
+        if not callable(records_getter):
+            return (0, 0, None)
+        try:
+            records = len(records_getter())
+        except Exception:
+            records = 0
+        skipped = 0
+        if callable(failures_getter):
+            try:
+                skipped = len(failures_getter())
+            except Exception:
+                skipped = 0
+        directory = ""
+        if callable(directory_getter):
+            try:
+                directory = directory_getter() or ""
+            except Exception:
+                directory = ""
+        return (records, skipped, directory)
+
+    def _training_apply_layer_sizes(self, sizes) -> None:
+        """Apply layer sizes to the training view's active network.
+
+        The training page is materialized on demand so a configuration
+        can be applied before Training is ever opened; the visible page
+        and navigation order are unchanged.
+
+        Raises:
+            ValueError: When the training page cannot be built, the run
+                is active, or the sizes are invalid — in every case the
+                active network stays unchanged.
+        """
+        page = self._ensure_page("training")
+        applier = getattr(page, "apply_layer_sizes", None)
+        if not callable(applier):
+            raise ValueError(
+                "The training view is not available yet; open it once "
+                "and try again."
+            )
+        applier(sizes)
+
+    def _ensure_page(self, key: str) -> QWidget | None:
+        """Build a registered page on demand without switching to it.
+
+        Unlike :meth:`request_view` this never navigates and never
+        validates unsaved edits; it only makes the page exist so other
+        views can read or write through it. Returns None when the page
+        is unknown or cannot be built.
+        """
+        page = self._pages.get(key)
+        if page is not None:
+            return page
+        factory = self._factories.get(key)
+        if factory is None:
+            return None
+        try:
+            page = factory()
+        except Exception:
+            return None
+        self._pages[key] = page
+        self._stack.addWidget(page)
+        return page
+
     def register_view(
         self, key: str, title: str, factory: Callable[[], QWidget]
     ) -> None:
@@ -221,6 +446,7 @@ class MainWindow(QMainWindow):
             self._order.append(key)
             item = QListWidgetItem(title, self._navigation)
             item.setData(Qt.ItemDataRole.UserRole, key)
+            item.setToolTip(title)
         self._factories[key] = factory
         existing = self._pages.pop(key, None)
         if existing is not None:
@@ -230,17 +456,22 @@ class MainWindow(QMainWindow):
     def register_default_views(self) -> None:
         """Register the real views implemented so far.
 
-        Datasets, training, testing, parameters, and experiments are
-        live; training consumes the dataset editor selection, testing
-        and parameters consume the trained model plus the selection,
-        and experiments loads its own saved files — all resolved
-        lazily at click time.
+        The dashboard, datasets, network configuration, training,
+        testing, parameters, experiments, and visualizations are live;
+        training consumes the dataset editor selection, testing,
+        parameters, and visualizations consume the trained model
+        (visualizations also the selection), the dashboard reads the
+        other pages' state, and experiments loads its own saved files —
+        all resolved lazily at click time.
         """
+        self.register_view("dashboard", "Dashboard", self._dashboard_factory)
         self.register_view("datasets", "Dataset Management", self._datasets_factory)
+        self.register_view("network", "Network Configuration", self._network_factory)
         self.register_view("training", "Training", self._training_factory)
         self.register_view("testing", "Testing", self._testing_factory)
         self.register_view("parameters", "Weights and Biases", self._parameters_factory)
         self.register_view("experiments", "Experiment History", self._experiments_factory)
+        self.register_view("visualization", "Visualization", self._visualization_factory)
 
     def current_view_key(self) -> str | None:
         """Return the key of the currently visible page, if any."""
@@ -282,11 +513,26 @@ class MainWindow(QMainWindow):
             self._navigation.setCurrentRow(row)
         finally:
             self._navigation.blockSignals(False)
+        self._show_current_page_in_status_bar()
         return True
 
     def report_error(self, message: str, timeout_ms: int = 8000) -> None:
         """Present an error message in the status bar."""
         self.statusBar().showMessage(message, timeout_ms)
+
+    def current_view_title(self) -> str:
+        """Return the title of the visible page, or an empty string."""
+        row = self._navigation.currentRow()
+        if 0 <= row < len(self._order):
+            item = self._navigation.item(row)
+            if item is not None:
+                return item.text()
+        return ""
+
+    def _show_current_page_in_status_bar(self) -> None:
+        """Name the visible section in the window status bar."""
+        title = self.current_view_title()
+        self._page_status.setText(title)
 
     def _current_page(self) -> QWidget | None:
         """Return the currently visible page widget, if any."""
@@ -305,10 +551,12 @@ class MainWindow(QMainWindow):
             except Exception:
                 dirty = False
             if dirty:
+                title = self.current_view_title() or "current section"
                 answer = QMessageBox.question(
                     self,
                     "Unsaved changes",
-                    "The current view has unsaved edits. Discard them?",
+                    f"{title} has unsaved edits. Leaving it now discards "
+                    "them. Continue?",
                     QMessageBox.Discard | QMessageBox.Cancel,
                     QMessageBox.Cancel,
                 )
@@ -331,6 +579,7 @@ class MainWindow(QMainWindow):
                             finally:
                                 self._navigation.blockSignals(False)
                             break
+                self._show_current_page_in_status_bar()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Confirm unsaved edits and running training before closing."""

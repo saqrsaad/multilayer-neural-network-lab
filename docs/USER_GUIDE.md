@@ -58,24 +58,47 @@ management, and the experiments view.
 
 ## 4. The interface at a glance
 
-The main window shows a navigation list beside the active page.
-Sections and their status:
+The main window shows a navigation panel beside the active page. The
+entry of the visible section stays highlighted, the window status bar
+names the current section, and the navigation panel can be resized with
+the splitter. Sections and their status:
 
-- **Dashboard** — placeholder ("This view is not implemented yet").
+- **Dashboard** — live overview (section 4.1).
 - **Dataset Management** — live dataset editor (section 5).
-- **Network Configuration** — placeholder; network settings (hidden
-  layers, learning rate, epochs, output size) live in the Training
-  view, with the input size always taken from the dataset.
+- **Network Configuration** — live; edits the layer sizes of the same
+  model the Training view uses (section 6).
 - **Training** — live (section 6).
 - **Testing** — live (section 7).
 - **Weights and Biases** — live parameter editor (section 8).
 - **Experiment History** — live record browser (section 9).
+- **Visualization** — live decision-boundary and architecture charts.
 
-Validation errors appear inline in red; operation status appears in
-dedicated status labels and the window status bar. Views with pending
-edits ask for confirmation (Discard/Cancel) before navigation
-discards them. Closing the window while training runs asks whether to
-quit and cancel training.
+Every page has the same structure: a page title with a one-line
+explanation, one or more titled section cards, and a feedback area at
+the bottom holding a status line and a validation/error line. Both
+feedback lines disappear while they are empty. Validation errors,
+operation status, warnings, and saved-file confirmations appear in the
+coloured strips next to the control they belong to. Each section has at
+most one primary (highlighted) button; state-replacing or destructive
+actions such as **Clear**, **Cancel run**, and model replacement are
+styled as warnings and ask for confirmation first. Long pages scroll
+instead of clipping controls, tables, or charts, and the window can be
+resized down to 1000×640 pixels.
+
+Views with pending edits ask for confirmation (Discard/Cancel) before
+navigation discards them. Closing the window while training runs asks
+whether to quit and cancel training.
+
+### 4.1 Dashboard
+
+The Dashboard reports only state that exists: the applied dataset, the
+active network and its layer sizes, whether the two are compatible, the
+training run state, the last completed run's summary, and the records
+loaded by Experiment History. A missing value is reported as a clear
+empty state that names the section that owns it — no metric is
+estimated or reused from an older run. The **Next step** card names the
+recommended action for the current state and offers buttons that open
+the section that performs it.
 
 ## 5. Datasets and CSV files
 
@@ -107,37 +130,50 @@ column (`0` or `1` only).
 - The `data/datasets`, `data/experiments`, and `data/models`
   directories exist for saved artifacts.
 
-## 6. Training
+## 6. Training and network configuration
 
-Open **Training**, validate a labeled dataset in Dataset Management
-(the view reads that selection), and configure the network:
+Open **Training** to validate a labeled dataset (the view reads the
+Dataset Management selection) and configure the network:
 
 - Hidden layers as comma/space-separated sizes, e.g. `4, 3` (blank
   means no hidden layer). Default: `4`.
 - Output size, default `1` (allowed 1–32).
 - Learning rate, a finite number greater than zero. Default: `0.1`.
 - Epoch count, default `100` (allowed 1–100000).
+- Data split: how the dataset is divided into training, validation, and
+  test rows (validation rows only choose the best epoch; test rows only
+  evaluate the finished model).
 - Input size is display-only and always comes from the dataset.
 
-Two explicit actions map onto the two supported modes:
+Open **Network Configuration** to set the whole architecture
+(`input, hidden…, output`, e.g. `2, 4, 1`) directly on the same model.
+Applying a different architecture replaces the current model and
+discards its trained parameters, so it asks for confirmation;
+applying the architecture already in use changes nothing.
+
+Training runs in a background worker (`gui/workers/training_worker.py`)
+using the same full-batch gradient-descent step as the core engine,
+so the interface stays responsive. A progress bar and the status line
+report the measured per-epoch training loss (`epoch k/N`); results
+appear in three tabs — per-epoch loss readout, loss curve, and test
+predictions — so they never have to share one squeezed column.
+
+Two explicit actions start a run and a third stops it:
 
 - **Train from scratch** builds a fresh network from the configured
-  sizes and trains it; any previous parameters are replaced, and the
-  status line says so.
+  sizes; previous parameters are replaced and the status line says so.
 - **Continue training** keeps the current parameters as the starting
   state. If the configured architecture no longer matches the model,
   training is refused with an error telling you to train from scratch
   instead — parameters are never silently reshaped or reset.
+- **Cancel run** asks the running job to stop after its current epoch.
+  Partial epochs are discarded and the previous model is left unchanged.
 
-Training runs in a background worker (`gui/workers/training_worker.py`)
-using the same full-batch gradient-descent step as the core engine,
-so the interface stays responsive and reports per-epoch progress
-(`epoch k/N` with the measured training loss). Completion shows the
-mode, epoch count, final training MSE, the full per-epoch loss list,
-and a loss curve. Closing the window mid-run offers cancellation;
-partial epochs are discarded and the previous model is left unchanged.
-Only one run executes at a time — starting another while one is
-active is rejected with a message.
+Only one run executes at a time — starting another while one is active
+is rejected with a message. Closing the window mid-run offers the same
+cancellation. **Save Model** and **Load Model** in the *Model state*
+card write and read a JSON model-state file; loading replaces the model
+used by every other section and asks for confirmation first.
 
 ## 7. Testing and evaluation
 
@@ -185,13 +221,14 @@ experiment-record JSON files (or **Refresh** to reload):
 - The table lists each record: id, timestamp, mode, layers, learning
   rate, epochs, final train loss, test MSE/accuracy (shown as "not
   recorded" when absent — never as zero), and dataset names.
-- Selecting a row shows the complete record, including the
-  per-epoch measured loss history.
+- Selecting a row shows the complete record in the **Record detail**
+  tab, including the per-epoch measured loss history.
 - Files that fail to load are skipped with their filenames and
   reasons; valid records still appear.
-- Select exactly two rows and press **Compare** for a side-by-side
-  table of configuration, settings, metrics, and deltas
-  (`second − first`, each labeled with which direction is better).
+- Select exactly two rows and press **Compare selected** for a
+  side-by-side table of configuration, settings, metrics, and deltas
+  in the **Comparison** tab (`second − first`, each labeled with which
+  direction is better).
   Only compatible experiments compare: same layer sizes, same
   training-data identity, and same test dataset. Anything else
   produces the exact mismatch reason instead of a comparison.
@@ -244,20 +281,24 @@ classification, implemented directly in NumPy:
 
 ## 12. Known limitations
 
-- **Dashboard** and **Network Configuration** are placeholder pages;
-  network settings live in the Training view.
-- There is no standalone Visualizations page: the loss curve appears
-  in Training and the prediction chart in Testing. There is no
-  testing-loss-over-time chart — only the recorded training MSE
-  history is plotted.
-- Model and experiment save/load have no GUI buttons; use the
-  storage-layer functions or place record files where the
-  experiments browser can open them.
+- The Dashboard only summarizes state owned by other sections; it does
+  not create, modify, or refresh anything by itself (it re-reads the
+  state each time it becomes visible).
+- Experiment records are read through the Experiment History browser.
+  There is no GUI action to delete or overwrite a saved record, and the
+  model/experiment files written automatically by a completed training
+  run are never overwritten (unique filenames are used).
+- No testing-loss-over-time chart: only the recorded per-epoch training
+  MSE (and validation MSE, when a validation subset was used) is
+  plotted over epochs.
 - Binary classification only: targets must be `0`/`1`, single-output
   charts only, sigmoid + MSE + full-batch gradient descent only
   (no Adam, CNNs/RNNs, PyTorch/TensorFlow, cloud, or accounts).
-- Training is one run at a time in a background thread; closing the
-  window is the way to cancel a run.
+- The decision-boundary chart needs exactly two input features and one
+  output; it explains what is missing instead of drawing a partial
+  picture.
+- Training is one run at a time in a background thread; a run is
+  cancelled with **Cancel run** or by closing the window.
 - This project is for educational experimentation — its outputs are
   not evidence that a model suits high-stakes decisions.
 
@@ -278,6 +319,10 @@ classification, implemented directly in NumPy:
   unsaved-edit and training-aware close guards), `views/`,
   `widgets/` (including `charts.py`), `workers/`
   (`training_worker.py`).
+- `src/neural_network_lab/gui/widgets/ui_theme.py` — the shared design
+  tokens and the application-wide Qt style sheet; `page_scaffold.py` —
+  the reusable page, card, feedback, and button components every view is
+  built from. Both are presentation-only.
 - `tests/` — automated suite run with `python -m pytest`.
 - Key invariants enforced in code and tests: evaluation never
   modifies parameters; training never touches test data; shapes are
