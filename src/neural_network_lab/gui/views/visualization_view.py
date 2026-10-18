@@ -453,7 +453,13 @@ class VisualizationView(QWidget):
             return
         if binary:
             drawn = self._boundary_chart.plot_boundary(
-                projected_features, projected_targets, grid_x, grid_y, region
+                projected_features,
+                projected_targets,
+                grid_x,
+                grid_y,
+                region,
+                x_label=self._feature_label(x_index),
+                y_label=self._feature_label(y_index),
             )
             failure = "The decision boundary could not be drawn."
         else:

@@ -130,6 +130,14 @@ The core layer must not depend on the GUI, storage implementation, or applicatio
 
 Avoid circular imports.
 
+**Implementation note:** `application/training_service.py` is currently
+empty (documented as a placeholder in `docs/USER_GUIDE.md`). The
+training workflow is implemented in `gui/views/training_view.py`, which
+directly invokes core-engine and storage functionality. This deviates
+from the intended `GUI → Application → Core` dependency direction; it
+is an architectural deviation, not an implemented service or a runtime
+failure.
+
 4. Core Model Responsibilities
 
 The model must expose clear operations for:

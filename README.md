@@ -28,9 +28,7 @@ The neural network's core mathematical operations must be implemented directly w
 
 Project Scope
 
-The initial version focuses on a feedforward multilayer perceptron for binary classification.
-
-The initial educational configuration uses:
+The initial version focuses on a feedforward multilayer perceptron. The default educational configuration is binary classification using:
 
 - Sigmoid activation.
 - Mean Squared Error (MSE).
@@ -38,9 +36,9 @@ The initial educational configuration uses:
 - Full-batch gradient descent.
 - User-configurable learning rate and epoch count.
 
-The architecture must support configurable layer sizes within the constraints defined in "docs/PROJECT_SPEC.md".
+The implementation also supports continuous-target regression (arbitrary finite targets, evaluated with MSE/MAE/RMSE without class accuracy) and multi-output models (one output per target column). Charts and prediction surfaces display one selected output at a time where applicable. Configurable layer sizes are supported within the constraints defined in "docs/PROJECT_SPEC.md".
 
-Advanced architectures and optimizers are outside the initial scope.
+Advanced architectures and optimizers (e.g. CNNs/RNNs, Adam) are outside the initial scope.
 
 Development Setup
 
@@ -52,11 +50,18 @@ After the environment is prepared, follow the project's development instructions
 
 Project Documentation
 
-- "docs/PROJECT_SPEC.md": Functional requirements and project boundaries.
-- "docs/ARCHITECTURE.md": Component responsibilities and dependencies.
-- "AGENTS.md": Mandatory instructions for coding agents.
-- "docs/DEVELOPMENT_WORKFLOW.md": Task execution and verification rules.
-- "docs/TASKS_INDEX.md": Task list and implementation status.
+- `docs/PROJECT_SPEC.md`: Functional requirements and project boundaries.
+- `docs/ARCHITECTURE.md`: Component responsibilities and dependencies.
+- `docs/DEVELOPMENT_WORKFLOW.md`: Task execution and verification rules.
+- `docs/USER_GUIDE.md`: Setup, GUI workflow, dataset formatting, training and evaluation, experiment history, persistence formats, and known limitations.
+- `docs/algorithms.md`: Mathematical reference for the implemented algorithms (forward propagation, MSE, backpropagation, gradient descent, initialization, best-epoch selection, dataset splitting).
+- `docs/persistence.md`: Model-state and experiment-record JSON formats, validation, save/load flow, and file locations.
+- `docs/gui-pages.md`: Page-by-page reference to the GUI (Dashboard, Dataset Management, Network Configuration, Training, Testing, Weights & Biases, Experiment History, Visualization).
+- `docs/file-structure.md`: Repository and source-code layout, module responsibilities, and dependency direction.
+- `docs/dataset-csv.md`: Dataset data model, task types, validation, and CSV import/export behavior.
+- `docs/testing-coverage.md`: Test suite organization and coverage, based on static inspection; tests have not been executed in this documentation phase.
+- `AGENTS.md`: Mandatory instructions for coding agents.
+- `docs/TASKS_INDEX.md`: Task list and implementation status (currently empty).
 
 Running the Application
 
@@ -82,6 +87,8 @@ Run the automated test suite from the repository root with:
 ```text
 python -m pytest
 ```
+
+The 18 test files under `tests/` have been reviewed statically in this documentation phase but have not been executed; runtime behavior and test results are unverified. See `docs/testing-coverage.md` for coverage details.
 
 See "docs/USER_GUIDE.md" for setup details, the GUI workflow, dataset
 formatting, training and evaluation, experiment history, and known

@@ -254,9 +254,13 @@ files are read; anything else is rejected with the reason. Payloads
 are structurally validated (shapes, required keys, finite numbers)
 before any model object is built, and a loaded model reproduces the
 saved predictions exactly. Saving refuses to overwrite an existing
-file unless `overwrite=True` is passed explicitly. There are
-currently no GUI buttons for saving/loading models or records —
-persistence is used programmatically and by the experiments browser.
+file unless `overwrite=True` is passed explicitly. The Training view
+provides **Save Model** and **Load Model** buttons for manual model
+save/load via file dialogs. Experiment records are saved automatically
+after a completed training run (with unique filenames in
+`data/experiments/`) and can be browsed and loaded in the Experiments
+view; there are no manual GUI buttons for saving or loading experiment
+records.
 
 ## 11. How the learning works (educational summary)
 
@@ -291,9 +295,14 @@ classification, implemented directly in NumPy:
 - No testing-loss-over-time chart: only the recorded per-epoch training
   MSE (and validation MSE, when a validation subset was used) is
   plotted over epochs.
-- Binary classification only: targets must be `0`/`1`, single-output
-  charts only, sigmoid + MSE + full-batch gradient descent only
-  (no Adam, CNNs/RNNs, PyTorch/TensorFlow, cloud, or accounts).
+- Binary classification uses targets of `0`/`1`, while continuous
+  regression keeps arbitrary finite target values (declared per
+  dataset) and is evaluated with MSE, MAE, and RMSE without class
+  accuracy. Multi-output models are supported in training and
+  evaluation; charts and prediction surfaces display one selected
+  output at a time. The core algorithm remains sigmoid activation,
+  MSE loss, and full-batch gradient descent only (no Adam,
+  CNNs/RNNs, PyTorch/TensorFlow, cloud, or accounts).
 - The decision-boundary chart needs exactly two input features and one
   output; it explains what is missing instead of drawing a partial
   picture.

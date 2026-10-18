@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+
+import numpy as np
 from numpy.typing import ArrayLike
 
 from neural_network_lab.core.losses import mean_squared_error
@@ -35,9 +37,9 @@ from neural_network_lab.core.optimizers import validate_learning_rate
 
 def _validate_epochs(epochs: int) -> int:
     """Validate an epoch count and return it as an int."""
-    if isinstance(epochs, bool) or not isinstance(epochs, int):
-        raise ValueError("epochs must be a positive integer")
-    if epochs < 1:
+    if isinstance(epochs, bool) or not isinstance(epochs, (int, np.integer)):
+        raise TypeError("epochs must be a positive integer")
+    if int(epochs) < 1:
         raise ValueError("epochs must be a positive integer")
     return int(epochs)
 

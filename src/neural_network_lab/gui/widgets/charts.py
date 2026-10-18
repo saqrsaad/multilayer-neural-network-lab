@@ -674,6 +674,8 @@ class DecisionBoundaryChart(FigureCanvas):
         region_prediction: object,
         *,
         threshold: float = CLASSIFICATION_THRESHOLD,
+        x_label: str = "feature 1",
+        y_label: str = "feature 2",
     ) -> bool:
         """Draw the predicted regions, the boundary, and the samples.
 
@@ -686,6 +688,8 @@ class DecisionBoundaryChart(FigureCanvas):
                 outputs for the grid, matching ``region_x``/``region_y``.
             threshold: Classification threshold used for the boundary
                 line label; default :data:`CLASSIFICATION_THRESHOLD`.
+            x_label: Label for the horizontal axis.
+            y_label: Label for the vertical axis.
 
         Returns True when drawn, False with a message when any input is
         missing, mismatched, or invalid — never a partial picture.
@@ -762,8 +766,8 @@ class DecisionBoundaryChart(FigureCanvas):
             )
             artist.set_label(label)
             handles.append(artist)
-        axes.set_xlabel("feature 1")
-        axes.set_ylabel("feature 2")
+        axes.set_xlabel(x_label)
+        axes.set_ylabel(y_label)
         axes.set_title("Decision boundary and dataset samples")
         _add_legend(axes, handles=handles, loc="upper right")
         _style_axes(axes)
